@@ -40,7 +40,12 @@ class sync_task extends \core\task\scheduled_task
             mtrace("Starting Chatbot Vector Sync...");
         }
 
-        // Robust SQL to find PDFs and their associated Course IDs
+        // Configuration limits for production safety
+        $batch_limit = 20; // Number of files to process per run
+        $time_limit = 180; // 3 minutes max execution time
+        $start_time = time();
+
+        // Robust SQL to find PDFs and their associated Course IDs that are NOT successfully synced or currently syncing
         $sql = "SELECT f.id, f.contenthash, f.pathnamehash, f.filename, f.contextid, 
                        CASE 
                            WHEN ctx.contextlevel = 50 THEN ctx.instanceid 
@@ -50,12 +55,20 @@ class sync_task extends \core\task\scheduled_task
                 FROM {files} f
                 JOIN {context} ctx ON f.contextid = ctx.id
                 LEFT JOIN {course_modules} cm ON ctx.contextlevel = 70 AND ctx.instanceid = cm.id
+                LEFT JOIN {local_chatbot_sync} sync ON f.pathnamehash = sync.pathnamehash AND (
+                       CASE 
+                           WHEN ctx.contextlevel = 50 THEN ctx.instanceid 
+                           WHEN ctx.contextlevel = 70 THEN cm.course 
+                           ELSE NULL 
+                       END) = sync.courseid
                 WHERE f.mimetype = 'application/pdf'
                   AND f.filename != '.'
-                  AND (ctx.contextlevel = 50 OR (ctx.contextlevel = 70 AND cm.course IS NOT NULL))";
+                  AND (ctx.contextlevel = 50 OR (ctx.contextlevel = 70 AND cm.course IS NOT NULL))
+                  AND (sync.id IS NULL OR (sync.syncstatus != 1 AND sync.syncstatus != 3))";
 
         try {
-            $files = $DB->get_records_sql($sql);
+            // Fetch only a limited batch of unsynced files
+            $files = $DB->get_records_sql($sql, null, 0, $batch_limit);
         } catch (\Exception $e) {
             if ($trace) {
                 mtrace("Database error during file lookup: " . $e->getMessage());
@@ -65,18 +78,27 @@ class sync_task extends \core\task\scheduled_task
 
         if (!$files) {
             if ($trace) {
-                mtrace("No PDF files found to sync.");
+                mtrace("No new PDF files found to sync.");
             }
             return;
         }
 
         if ($trace) {
-            mtrace("Found " . count($files) . " candidate PDF files.");
+            mtrace("Found " . count($files) . " candidate PDF files for this batch.");
         }
 
         $fs = get_file_storage();
+        $processed = 0;
 
         foreach ($files as $file) {
+            // Check time limit
+            if (time() - $start_time > $time_limit) {
+                if ($trace) {
+                    mtrace("Time limit reached ({$time_limit}s). Stopping batch early.");
+                }
+                break;
+            }
+
             try {
                 if (empty($file->courseid)) {
                     if ($trace) {
@@ -143,6 +165,8 @@ class sync_task extends \core\task\scheduled_task
                     $record->timemodified = time();
                     $DB->update_record('local_chatbot_sync', $record);
                 }
+                
+                $processed++;
             } catch (\Exception $e) {
                 if ($trace) {
                     mtrace("Unexpected error processing {$file->filename}: " . $e->getMessage());
@@ -151,7 +175,7 @@ class sync_task extends \core\task\scheduled_task
         }
 
         if ($trace) {
-            mtrace("Chatbot Vector Sync complete.");
+            mtrace("Chatbot Vector Sync batch complete. Processed {$processed} files.");
         }
     }
 
@@ -161,7 +185,10 @@ class sync_task extends \core\task\scheduled_task
      */
     protected function send_to_backend($courseid, $filename, $content, $trace = true)
     {
-        $url = "http://103.105.225.150:8001/api/upload";
+        // Fix #8: Read backend URL from Moodle admin settings instead of hardcoding.
+        // Configure via: Admin > Plugins > Local plugins > AI Chatbot > Backend URL.
+        $backend_url = \local_chatbot\config::get_backend_url();
+        $url = rtrim($backend_url, '/') . '/api/upload';
 
         $tmpdir = make_temp_directory('chatbot');
         $tmpfile = tempnam($tmpdir, 'sync');

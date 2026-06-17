@@ -17,11 +17,10 @@ class observer
      */
     public static function sync_on_change($event)
     {
+        // Fix #7: Only queue the adhoc task. Running sync_files() synchronously
+        // here blocks the Moodle web request and scans all PDFs on every edit.
+        // The adhoc task runs via cron and is sufficient for near-real-time sync.
         $task = new \local_chatbot\task\sync_adhoc_task();
         \core\task\manager::queue_adhoc_task($task);
-
-        // Real-time sync: execute immediately but silently (suppress mtrace output)
-        $sync_task = new \local_chatbot\task\sync_task();
-        $sync_task->sync_files(false);
     }
 }

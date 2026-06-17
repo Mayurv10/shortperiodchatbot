@@ -16,9 +16,12 @@ function local_chatbot_before_footer() {
     $context = context_course::instance($COURSE->id);
     $canUpload = has_capability('local/chatbot:upload', $context);
 
+    $backend_url = \local_chatbot\config::get_backend_url();
+
     // Load JavaScript module and initialize (CSS is auto-loaded from styles.css)
     $PAGE->requires->js_call_amd('local_chatbot/chatbot', 'init', [
         $COURSE->id,
-        $canUpload
+        $canUpload,
+        $backend_url
     ]);
 }

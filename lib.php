@@ -5,7 +5,7 @@ defined('MOODLE_INTERNAL') || die();
  * Hook function to inject chatbot into course pages
  */
 function local_chatbot_before_footer() {
-    global $PAGE, $COURSE;
+    global $PAGE, $COURSE, $USER;
 
     // Only load on course pages (not on site home or other pages)
     if ($PAGE->course->id == SITEID) {
@@ -22,6 +22,7 @@ function local_chatbot_before_footer() {
     $PAGE->requires->js_call_amd('local_chatbot/chatbot', 'init', [
         $COURSE->id,
         $canUpload,
-        $backend_url
+        $backend_url,
+        $USER->id
     ]);
 }

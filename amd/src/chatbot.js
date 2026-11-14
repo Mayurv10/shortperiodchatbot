@@ -1,6 +1,6 @@
 define(['jquery'], function ($) {
     return {
-        init: function (courseId, canUpload, backendUrl) {
+        init: function (courseId, canUpload, backendUrl, userId) {
             // Fix #2: Corrected backend URL — was pointing to localhost:5000 which doesn't exist.
             // This must match the actual server IP and port from docker-compose (5000 external).
             // Fix #8 companion: if you update the URL in Moodle admin settings, update here too.
@@ -118,9 +118,17 @@ define(['jquery'], function ($) {
                         body: JSON.stringify({
                             index_id: courseId, // Fix #3b: backend requires index_id
                             question: q,
-                            session_id: sessionId
+                            session_id: sessionId,
+                            user_id: userId ? String(userId) : sessionId
                         })
                     });
+
+                    if (res.status === 429) {
+                        const errData = await res.json().catch(() => ({}));
+                        loadingMsg.remove();
+                        addMessage(`⚠️ ${errData.detail || "You have reached your daily limit of 5 queries per day."}`, "bot");
+                        return;
+                    }
 
                     if (!res.ok) throw new Error("Server error");
 
